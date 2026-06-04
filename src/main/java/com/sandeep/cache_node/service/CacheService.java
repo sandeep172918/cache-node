@@ -13,23 +13,44 @@ public class CacheService {
     private final Map<String, CacheEntry> cache =
             new ConcurrentHashMap<>();
 
-    public void put(String key, String value) {
-        cache.put(key, new CacheEntry(value));
-    }
+   public void put(String key, String value) {
+
+    System.out.println(
+            "[PUT] Thread=" +
+            Thread.currentThread().getName() +
+            " key=" + key +
+            " value=" + value
+    );
+
+    cache.put(key, new CacheEntry(value));
+   }
 
     public String get(String key) {
 
-        CacheEntry entry = cache.get(key);
+    System.out.println(
+            "[GET] Thread=" +
+            Thread.currentThread().getName() +
+            " key=" + key
+    );
 
-        if (entry == null)
-            return null;
+    CacheEntry entry = cache.get(key);
 
-        return entry.getValue();
-    }
+    if (entry == null)
+        return null;
 
-    public void delete(String key) {
-        cache.remove(key);
-    }
+    return entry.getValue();
+}
+
+   public void delete(String key) {
+
+    System.out.println(
+            "[DELETE] Thread=" +
+            Thread.currentThread().getName() +
+            " key=" + key
+    );
+
+    cache.remove(key);
+}
 
     public Map<String, CacheEntry> getAll() {
         return cache;
