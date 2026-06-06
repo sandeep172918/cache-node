@@ -10,19 +10,21 @@ import com.sandeep.cache_node.model.CacheEntry;
 @Service
 public class CacheService {
 
+    private final CacheEventPublisher publisher;
+
     private final Map<String, CacheEntry> cache =
             new ConcurrentHashMap<>();
 
+    public CacheService( CacheEventPublisher publisher) {
+    this.publisher = publisher;
+   }        
+
    public void put(String key, String value) {
-
     System.out.println(
-            "[PUT] Thread=" +
-            Thread.currentThread().getName() +
-            " key=" + key +
-            " value=" + value
+            "[PUT] " + key
     );
-
     cache.put(key, new CacheEntry(value));
+    publisher.publish(key);
    }
 
     public String get(String key) {
