@@ -11,20 +11,37 @@ import com.sandeep.cache_node.model.CacheEntry;
 public class CacheService {
 
     private final CacheEventPublisher publisher;
+    private final VersionService versionService;
+    
 
     private final Map<String, CacheEntry> cache =
             new ConcurrentHashMap<>();
 
-    public CacheService( CacheEventPublisher publisher) {
+    private final Map<String, Long>
+        latestVersions =
+        new ConcurrentHashMap<>();        
+
+   public CacheService(
+        CacheEventPublisher publisher,
+        VersionService versionService) {
+
     this.publisher = publisher;
-   }        
+    this.versionService = versionService;
+}      
 
    public void put(String key, String value) {
-    System.out.println(
-            "[PUT] " + key
-    );
-    cache.put(key, new CacheEntry(value));
-    publisher.publish(key);
+     long version = versionService.nextVersion();
+
+      System.out.println("[PUT] key="+ key+ " version="+ version);
+
+      latestVersions.put(
+        key,
+        version
+      );
+
+     cache.put( key,new CacheEntry(value,version));
+
+     publisher.publish(key,version);
    }
 
     public String get(String key) {
@@ -54,7 +71,47 @@ public class CacheService {
     cache.remove(key);
 }
 
+  public void invalidate(
+        String key,
+        long version) {
+
+    Long currentVersion =
+            latestVersions.get(key);
+
+    if(currentVersion != null
+       && version <= currentVersion) {
+
+        System.out.println(
+            "[STALE EVENT IGNORED] key="
+            + key
+            + " incoming="
+            + version
+            + " current="
+            + currentVersion
+        );
+
+        return;
+    }
+
+    latestVersions.put(
+            key,
+            version
+    );
+
+    System.out.println(
+        "[INVALIDATE] key="
+        + key
+        + " version="
+        + version
+    );
+
+    cache.remove(key);
+}
+
     public Map<String, CacheEntry> getAll() {
         return cache;
     }
+    public Map<String, Long> getVersions() {
+    return latestVersions;
+   }
 }

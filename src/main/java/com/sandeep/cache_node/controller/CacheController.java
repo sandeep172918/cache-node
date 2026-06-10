@@ -14,15 +14,18 @@ import org.springframework.web.bind.annotation.RestController;
 import com.sandeep.cache_node.dto.CacheRequest;
 import com.sandeep.cache_node.model.CacheEntry;
 import com.sandeep.cache_node.service.CacheService;
+import com.sandeep.cache_node.service.VersionService;
 
 @RestController
 @RequestMapping("/cache")
 public class CacheController {
 
     private final CacheService cacheService;
+    private final VersionService versionService;
 
-    public CacheController(CacheService cacheService) {
+    public CacheController(CacheService cacheService,VersionService versionService) {
         this.cacheService = cacheService;
+        this.versionService = versionService;
     }
 
     @PutMapping("/{key}")
@@ -61,4 +64,10 @@ public class CacheController {
     public Map<String, CacheEntry> getAll() {
         return cacheService.getAll();
     }
+
+   @GetMapping("/versions")
+public Map<String, Long> versions() {
+    return cacheService.getVersions();
+}
+
 }
