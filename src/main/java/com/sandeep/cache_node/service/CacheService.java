@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Service;
 
 import com.sandeep.cache_node.model.CacheEntry;
+import com.sandeep.cache_node.model.CacheState;
 
 @Service
 public class CacheService {
@@ -39,7 +40,14 @@ public class CacheService {
         version
       );
 
-     cache.put( key,new CacheEntry(value,version));
+    cache.put(
+    key,
+    new CacheEntry(
+        value,
+        version,
+        CacheState.MODIFIED
+    )
+);
 
      publisher.publish(key,version);
    }
@@ -68,7 +76,15 @@ public class CacheService {
             " key=" + key
     );
 
-    cache.remove(key);
+   CacheEntry entry =
+        cache.get(key);
+
+if(entry != null){
+
+    entry.setState(
+            CacheState.INVALID
+    );
+}
 }
 
   public void invalidate(
@@ -105,7 +121,15 @@ public class CacheService {
         + version
     );
 
-    cache.remove(key);
+   CacheEntry entry =
+        cache.get(key);
+
+if(entry != null){
+
+    entry.setState(
+            CacheState.INVALID
+    );
+}
 }
 
     public Map<String, CacheEntry> getAll() {

@@ -1,5 +1,6 @@
 package com.sandeep.cache_node.controller;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import org.springframework.http.ResponseEntity;
@@ -68,6 +69,25 @@ public class CacheController {
    @GetMapping("/versions")
 public Map<String, Long> versions() {
     return cacheService.getVersions();
+}
+@GetMapping("/states")
+public Map<String, String> states() {
+
+    Map<String, String> result =
+            new HashMap<>();
+
+    for(var entry :
+            cacheService.getAll().entrySet()) {
+
+        result.put(
+            entry.getKey(),
+            entry.getValue()
+                 .getState()
+                 .name()
+        );
+    }
+
+    return result;
 }
 
 }
