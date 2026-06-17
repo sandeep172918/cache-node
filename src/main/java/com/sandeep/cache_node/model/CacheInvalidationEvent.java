@@ -2,9 +2,15 @@ package com.sandeep.cache_node.model;
 
 public class CacheInvalidationEvent {
 
+    private EventType type;
+
     private String key;
+
     private String senderId;
+
     private long version;
+
+    private String value;
 
     public CacheInvalidationEvent() {
     }
@@ -16,14 +22,37 @@ public class CacheInvalidationEvent {
         this.key = key;
         this.senderId = senderId;
     }
-     public CacheInvalidationEvent(
+
+    public CacheInvalidationEvent(
             String key,
             String senderId,
             long version) {
 
         this.key = key;
         this.senderId = senderId;
-        this.version=version;
+        this.version = version;
+    }
+
+    public CacheInvalidationEvent(
+            EventType type,
+            String key,
+            String senderId,
+            long version,
+            String value) {
+
+        this.type = type;
+        this.key = key;
+        this.senderId = senderId;
+        this.version = version;
+        this.value = value;
+    }
+
+    public EventType getType() {
+        return type;
+    }
+
+    public void setType(EventType type) {
+        this.type = type;
     }
 
     public String getKey() {
@@ -41,10 +70,20 @@ public class CacheInvalidationEvent {
     public void setSenderId(String senderId) {
         this.senderId = senderId;
     }
-     public long getVersion(){
+
+    public long getVersion() {
         return version;
     }
-    public void setVersion(long version){
-        this.version=version;
+
+    public void setVersion(long version) {
+        this.version = version;
+    }
+
+    public String getValue() {
+        return value;
+    }
+
+    public void setValue(String value) {
+        this.value = value;
     }
 }

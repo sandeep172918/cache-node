@@ -89,5 +89,13 @@ public Map<String, String> states() {
 
     return result;
 }
+@GetMapping("/entry/{key}")
+public CacheEntry entry(
+        @PathVariable String key){
+
+    return cacheService
+            .getAll()
+            .get(key);
+}
 
 }

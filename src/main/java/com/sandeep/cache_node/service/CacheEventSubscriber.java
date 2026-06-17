@@ -1,9 +1,11 @@
 package com.sandeep.cache_node.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sandeep.cache_node.model.CacheInvalidationEvent;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sandeep.cache_node.model.CacheInvalidationEvent;
+import com.sandeep.cache_node.model.EventType;
 
 @Service
 public class CacheEventSubscriber {
@@ -31,33 +33,98 @@ public class CacheEventSubscriber {
                             message,
                             CacheInvalidationEvent.class
                     );
-
-            if(event.getSenderId()
+            if (event.getSenderId()
                     .equals(nodeId)) {
 
                 System.out.println(
                         "[IGNORE OWN EVENT] "
+                                + event.getType()
+                                + " key="
                                 + event.getKey()
                 );
 
                 return;
             }
 
-           System.out.println(
-             "[INVALIDATE FROM "
-             + event.getSenderId()
-              + "] key="
-              + event.getKey()
-             + " version="
-             + event.getVersion()
-            );
+            EventType type = event.getType();
 
-           cacheService.invalidate(
-        event.getKey(),
-        event.getVersion()
-);
+            if (type == null) {
+                System.out.println(
+                    "[LEGACY EVENT] key="
+                    + event.getKey()
+                    + " — treating as WRITE_REQUEST"
+                );
+
+                cacheService.handleRemoteWriteRequest(
+                    event.getKey(),
+                    event.getVersion()
+                );
+                return;
+            }
+
+            switch (type) {
+
+                case WRITE_REQUEST:
+                    System.out.println(
+                        "[RECV WRITE_REQUEST from "
+                        + event.getSenderId()
+                        + "] key=" + event.getKey()
+                        + " version=" + event.getVersion()
+                    );
+
+                    cacheService.handleRemoteWriteRequest(
+                        event.getKey(),
+                        event.getVersion()
+                    );
+                    break;
+
+                case READ_REQUEST:
+                    System.out.println(
+                        "[RECV READ_REQUEST from "
+                        + event.getSenderId()
+                        + "] key=" + event.getKey()
+                    );
+
+                    cacheService.handleRemoteReadRequest(
+                        event.getKey(),
+                        event.getSenderId()
+                    );
+                    break;
+
+                case DATA_RESPONSE:
+                    System.out.println(
+                        "[RECV DATA_RESPONSE from "
+                        + event.getSenderId()
+                        + "] key=" + event.getKey()
+                        + " version=" + event.getVersion()
+                    );
+
+                    cacheService.handleDataResponse(
+                        event.getKey(),
+                        event.getValue(),
+                        event.getVersion()
+                    );
+                    break;
+
+                case INVALIDATE:
+                    System.out.println(
+                        "[RECV INVALIDATE from "
+                        + event.getSenderId()
+                        + "] key=" + event.getKey()
+                        + " version=" + event.getVersion()
+                    );
+
+                    cacheService.handleRemoteWriteRequest(
+                        event.getKey(),
+                        event.getVersion()
+                    );
+                    break;
+            }
 
         } catch (Exception e) {
+            System.err.println(
+                "[SUBSCRIBER ERROR] " + e.getMessage()
+            );
             throw new RuntimeException(e);
         }
     }

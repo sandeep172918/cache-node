@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sandeep.cache_node.model.CacheInvalidationEvent;
+import com.sandeep.cache_node.model.EventType;
 
 @Service
 public class CacheEventPublisher {
@@ -25,25 +26,62 @@ public class CacheEventPublisher {
 
         this.redisTemplate = redisTemplate;
     }
+    public void publishWriteRequest(
+            String key,
+            long version) {
 
-    public void publish(String key,long version) {
+        CacheInvalidationEvent event =
+                new CacheInvalidationEvent(
+                        EventType.WRITE_REQUEST,
+                        key,
+                        nodeId,
+                        version,
+                        null
+                );
+
+        publish(event);
+    }
+
+    public void publishReadRequest(String key) {
+
+        CacheInvalidationEvent event =
+                new CacheInvalidationEvent(
+                        EventType.READ_REQUEST,
+                        key,
+                        nodeId,
+                        0,
+                        null
+                );
+
+        publish(event);
+    }
+    public void publishDataResponse(
+            String key,
+            String value,
+            long version) {
+
+        CacheInvalidationEvent event =
+                new CacheInvalidationEvent(
+                        EventType.DATA_RESPONSE,
+                        key,
+                        nodeId,
+                        version,
+                        value
+                );
+
+        publish(event);
+    }
+
+    private void publish(CacheInvalidationEvent event) {
 
         try {
 
-           CacheInvalidationEvent event =
-            new CacheInvalidationEvent(
-                key,
-                nodeId,
-                version
-         );
-
             String json =
-                    mapper.writeValueAsString(
-                            event
-                    );
+                    mapper.writeValueAsString(event);
 
             System.out.println(
-                    "[PUBLISH] " + json
+                    "[PUBLISH " + event.getType()
+                            + "] " + json
             );
 
             redisTemplate.convertAndSend(
