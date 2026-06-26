@@ -5,5 +5,7 @@ public enum EventType {
     READ_REQUEST,
     DATA_RESPONSE,
     WRITE_REQUEST,
-    INVALIDATE
+    INVALIDATE,
+    SYNC_REQUEST,
+    SYNC_RESPONSE
 }

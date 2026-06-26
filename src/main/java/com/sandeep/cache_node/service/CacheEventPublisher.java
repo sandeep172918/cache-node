@@ -1,5 +1,7 @@
 package com.sandeep.cache_node.service;
 
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -93,4 +95,16 @@ public class CacheEventPublisher {
             throw new RuntimeException(e);
         }
     }
+    public void publishSyncRequest() {
+    publish(new CacheInvalidationEvent(EventType.SYNC_REQUEST, null, nodeId, 0, null));
+}
+
+   public void publishSyncResponse(Map<String, Long> activeVersions) {
+    try {
+        String jsonMap = mapper.writeValueAsString(activeVersions);
+        publish(new CacheInvalidationEvent(EventType.SYNC_RESPONSE, null, nodeId, 0, jsonMap));
+    } catch (Exception e) {
+        System.err.println("[PUBLISH SYNC ERR] " + e.getMessage());
+    }
+}
 }

@@ -1,5 +1,8 @@
 package com.sandeep.cache_node.service;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -11,20 +14,23 @@ import com.sandeep.cache_node.model.EventType;
 public class CacheEventSubscriber {
 
     private final CacheService cacheService;
+    private final CacheEventPublisher publisher; // added
 
-    @Value("${node.id}")
-    private String nodeId;
+@Value("${node.id}")
+private String nodeId;
 
-    private final ObjectMapper mapper =
-            new ObjectMapper();
+private final ObjectMapper mapper = new ObjectMapper();
 
-    public CacheEventSubscriber(
-            CacheService cacheService) {
 
-        this.cacheService = cacheService;
-    }
+public CacheEventSubscriber(
+        CacheService cacheService,
+        CacheEventPublisher publisher) {
 
-    public void receiveMessage(String message) {
+    this.cacheService = cacheService;
+    this.publisher = publisher;
+}
+
+public void receiveMessage(String message) {
 
         try {
 
@@ -119,6 +125,28 @@ public class CacheEventSubscriber {
                         event.getVersion()
                     );
                     break;
+                case SYNC_REQUEST:
+                    System.out.println("[RECV SYNC_REQUEST from " + event.getSenderId() + "]");
+                    Map<String, Long> activeVersions = cacheService.getActiveVersions();
+                    publisher.publishSyncResponse(activeVersions);
+                    break;
+
+               case SYNC_RESPONSE:
+                   System.out.println("[RECV SYNC_RESPONSE from " + event.getSenderId() + "]");
+                    try {
+                       Map<String, Object> rawMap = mapper.readValue(event.getValue(), Map.class);
+                       Map<String, Long> remoteVersions = new HashMap<>();
+                       rawMap.forEach((k, v) -> {
+                             if (v instanceof Number num) {
+                             remoteVersions.put(k, num.longValue());
+                              }
+                        });
+                    cacheService.handleSyncResponse(remoteVersions);
+                   } catch (Exception e) {
+                      System.err.println("[SUBSCRIBER SYNC RECONCILE ERR] " + e.getMessage());
+                   }
+                    break;
+ 
             }
 
         } catch (Exception e) {

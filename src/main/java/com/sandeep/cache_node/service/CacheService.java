@@ -1,5 +1,6 @@
 package com.sandeep.cache_node.service;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -404,4 +405,30 @@ public class CacheService {
     public Map<String, Long> getVersions() {
         return latestVersions;
     }
+    public Map<String, Long> getActiveVersions() {
+      Map<String, Long> active = new HashMap<>();
+      cache.forEach((key, entry) -> {
+        if (entry.getState() != CacheState.INVALID) {
+            active.put(key, entry.getVersion());
+        }
+      });
+     return active;
+   }
+   public void handleSyncResponse(Map<String, Long> remoteVersions) {
+    remoteVersions.forEach((key, remoteVersion) -> {
+        CacheEntry localEntry = cache.get(key);
+        if (localEntry != null && localEntry.getState() != CacheState.INVALID) {
+            if (localEntry.getVersion() < remoteVersion) {
+                System.out.println("[HEAL INVALIDATE] key=" + key 
+                                   + " local=" + localEntry.getVersion() 
+                                   + " remote=" + remoteVersion);
+                localEntry.setState(CacheState.INVALID);
+                latestVersions.put(key, remoteVersion);
+            }
+        }
+    });
+}
+public void publishSyncRequest() {
+    publisher.publishSyncRequest();
+}
 }
