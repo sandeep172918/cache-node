@@ -61,20 +61,198 @@ Each key in a node's local cache transitions through the following states:
 
 ## 3. Recovery & Partition Healing Protocols
 
-### Cold Startup Recovery
-When a node starts up (or restarts after a crash), its cache memory is empty. To prevent reading stale values from the database when another node has a dirty write (state `MODIFIED`), the node performs a startup sync:
-1. On boot, the node broadcasts a `SYNC_REQUEST` event containing its ID.
-2. Active nodes receive `SYNC_REQUEST` and publish a `SYNC_RESPONSE` containing their active key-to-version mappings: `{"key1": 12, "key2": 15}`.
-3. The recovering node compares the received remote versions with its local versions, invalidating any local entry that is stale.
+## 1. Core Scenarios Solved
 
-### Network Partition Healing (Split-brain Recovery)
-Because Redis Pub/Sub is fire-and-forget, a node that loses connection to Redis will miss all `WRITE_REQUEST` invalidations sent during the partition. Once the connection is restored, it could serve stale cache hits.
-1. The **`RecoveryService`** runs a resource-safe check (using try-with-resources to avoid connection leaks) every 5 seconds, pinging Redis.
-2. If connection is lost, it flags the node as disconnected.
-3. When the connection is restored (partition healed), the service detects the state transition from disconnected to connected and automatically broadcasts a `SYNC_REQUEST`.
-4. The node reconciles the returned version maps and invalidates any stale keys, recovering full cache consistency.
+Your caching engine must maintain **strong cache consistency**. This becomes difficult under two main circumstances:
+
+1. **Cold Startup**: A node crashes or restarts. While it was offline, other active nodes might have written newer data. If the restarting node simply loads values from the backing database without checking, it could read stale values.
+2. **Network Partition (Split-brain)**: A node loses network connectivity to Redis. Since Redis Pub/Sub is fire-and-forget, the disconnected node misses all invalidation events (`WRITE_REQUEST`) sent during the partition. When the network heals, it still has stale data in its memory.
 
 ---
+
+## 2. Cold Startup Recovery
+
+When a node starts up, its memory is empty (or has legacy entries). It must reconcile its state before serving requests safely.
+
+### The Lifecycle Flow
+
+```mermaid
+sequenceDiagram
+    participant Node3 as Node 3 (Booting)
+    participant Redis as Redis Pub/Sub
+    participant Node1 as Node 1 (Active)
+    participant Node2 as Node 2 (Active)
+
+    Note over Node3: Node Boots Up
+    Node3->>Redis: EventListener: publish SYNC_REQUEST
+    Redis-->>Node1: Broadcast SYNC_REQUEST
+    Redis-->>Node2: Broadcast SYNC_REQUEST
+    
+    Note over Node1: Get active versions map
+    Node1->>Redis: publish SYNC_RESPONSE {key1: v3, key2: v5}
+    Note over Node2: Get active versions map
+    Node2->>Redis: publish SYNC_RESPONSE {key1: v2, key2: v5}
+
+    Redis-->>Node3: Receive SYNC_RESPONSE (Node 1)
+    Note over Node3: Reconcile version map: <br/>Invalidate local entries if <br/>local version < remote version.
+    
+    Redis-->>Node3: Receive SYNC_RESPONSE (Node 2)
+    Note over Node3: Reconcile version map again
+```
+
+### Implementation Details
+
+#### Step A: Detecting Startup & Requesting Sync
+In [RecoveryService.java](file:///home/sandeep/cache-node/src/main/java/com/sandeep/cache_node/service/RecoveryService.java), the `@EventListener(ApplicationReadyEvent.class)` triggers as soon as the Spring Boot application is fully up and running:
+
+```java
+@EventListener(ApplicationReadyEvent.class)
+public void onStartup() {
+    System.out.println("[RECOVERY] Node started, broadcasting SYNC_REQUEST...");
+    try {
+        publisher.publishSyncRequest();
+    } catch (Exception e) {
+        System.err.println("[RECOVERY STARTUP ERR] Redis offline, will retry via monitor: " + e.getMessage());
+        wasConnected = false;
+    }
+}
+```
+
+#### Step B: Active Nodes Receive Request & Send Version Map
+In [CacheEventSubscriber.java](file:///home/sandeep/cache-node/src/main/java/com/sandeep/cache_node/service/CacheEventSubscriber.java), when other nodes receive a `SYNC_REQUEST`:
+
+```java
+case SYNC_REQUEST:
+    System.out.println("[RECV SYNC_REQUEST from " + event.getSenderId() + "]");
+    Map<String, Long> activeVersions = cacheService.getActiveVersions();
+    publisher.publishSyncResponse(activeVersions);
+    break;
+```
+
+In [CacheService.java](file:///home/sandeep/cache-node/src/main/java/com/sandeep/cache_node/service/CacheService.java), `getActiveVersions()` filters out any invalid entries and returns only active key-version mappings:
+
+```java
+public Map<String, Long> getActiveVersions() {
+    Map<String, Long> active = new HashMap<>();
+    cache.forEach((key, entry) -> {
+        if (entry.getState() != CacheState.INVALID) {
+            active.put(key, entry.getVersion());
+        }
+    });
+    return active;
+}
+```
+
+#### Step C: The Recovering Node Receives response & Reconciles
+When the recovering node receives a `SYNC_RESPONSE`, it parses the version map and calls `handleSyncResponse` in `CacheService`:
+
+```java
+case SYNC_RESPONSE:
+    System.out.println("[RECV SYNC_RESPONSE from " + event.getSenderId() + "]");
+    try {
+        Map<String, Object> rawMap = mapper.readValue(event.getValue(), Map.class);
+        Map<String, Long> remoteVersions = new HashMap<>();
+        rawMap.forEach((k, v) -> {
+            if (v instanceof Number num) {
+                remoteVersions.put(k, num.longValue());
+            }
+        });
+        cacheService.handleSyncResponse(remoteVersions);
+    } catch (Exception e) {
+        System.err.println("[SUBSCRIBER SYNC RECONCILE ERR] " + e.getMessage());
+    }
+    break;
+```
+
+Inside [CacheService.java](file:///home/sandeep/cache-node/src/main/java/com/sandeep/cache_node/service/CacheService.java):
+```java
+public void handleSyncResponse(Map<String, Long> remoteVersions) {
+    remoteVersions.forEach((key, remoteVersion) -> {
+        CacheEntry localEntry = cache.get(key);
+        if (localEntry != null && localEntry.getState() != CacheState.INVALID) {
+            // Reconcile: If my local cache version is older than what the cluster has, invalidate!
+            if (localEntry.getVersion() < remoteVersion) {
+                System.out.println("[HEAL INVALIDATE] key=" + key 
+                                   + " local=" + localEntry.getVersion() 
+                                   + " remote=" + remoteVersion);
+                localEntry.setState(CacheState.INVALID);
+                latestVersions.put(key, remoteVersion);
+            }
+        }
+    });
+}
+```
+
+---
+
+## 3. Network Partition Healing (Split-Brain)
+
+If a node gets disconnected from the network, it enters a state of isolation. During isolation:
+1. It cannot receive Pub/Sub messages (so it misses `WRITE_REQUEST` updates from other nodes).
+2. It can still serve local cache hits (`EXCLUSIVE`, `SHARED`, or `MODIFIED`) if the keys are in memory, because going to the database or Redis will fail.
+
+### The Connection Watchdog
+
+The watchdog is implemented in [RecoveryService.java](file:///home/sandeep/cache-node/src/main/java/com/sandeep/cache_node/service/RecoveryService.java) using a scheduled loop running every 5 seconds.
+
+```mermaid
+flowchart TD
+    Start([Every 5 seconds]) --> Ping[Ping Redis server]
+    Ping -- Success --> PrevConnected{Was previously connected?}
+    Ping -- Failure --> PrevConnectedFail{Was previously connected?}
+    
+    PrevConnected -- Yes --> Idle([Do nothing])
+    PrevConnected -- No --> Healing[1. Log Restore<br/>2. Broadcast SYNC_REQUEST<br/>3. Set wasConnected = true]
+    
+    PrevConnectedFail -- Yes --> Disconnect[1. Log Partition Warning<br/>2. Set wasConnected = false]
+    PrevConnectedFail -- No --> Idle
+```
+
+### Implementation of the Watchdog
+
+Here is how [RecoveryService.java](file:///home/sandeep/cache-node/src/main/java/com/sandeep/cache_node/service/RecoveryService.java) implements this loop:
+
+```java
+@Scheduled(fixedRate = 5000)
+public void checkConnection() {
+    boolean currentlyConnected = false;
+    
+    // Resource-safe check (try-with-resources prevents connection pool leaks)
+    try (var connection = redisTemplate.getConnectionFactory().getConnection()) {
+        connection.ping();
+        currentlyConnected = true;
+    } catch (Exception e) {
+        currentlyConnected = false;
+    }
+
+    // State Transition: RESTORED (Healing)
+    if (currentlyConnected && !wasConnected) {
+        System.out.println("[HEAL] Connection to Redis restored! Triggering SYNC_REQUEST...");
+        try {
+            publisher.publishSyncRequest();
+            wasConnected = true;
+        } catch (Exception e) {
+            System.err.println("[HEAL ERR] Failed to publish sync request: " + e.getMessage());
+        }
+    } 
+    // State Transition: DISCONNECTED (Partitioned)
+    else if (!currentlyConnected && wasConnected) {
+        System.err.println("[PARTITION DETECTED] Lost connection to Redis! Local hits will remain active.");
+        wasConnected = false;
+    }
+}
+```
+
+### Why it triggers `SYNC_REQUEST` on reconnect:
+Since the node was disconnected, it has missed several `WRITE_REQUEST` messages. When it pings successfully again, it triggers a `SYNC_REQUEST` to prompt all other active nodes to publish their version maps. The healed node then runs the reconciliation in `handleSyncResponse` to invalidate any local key whose version is outdated.
+
+---
+
+## 4. Key Strengths of this Design
+
+1. **Active Peer Reconciliation**: Nodes do not rely on a central server to know what was missed. They query their peers directly, ensuring the cluster establishes a consensus.
+2. **Resource-Safe Watchdog**: Using `try-with-resources` to ping Redis ensures that failed connection attempts do not exhaust the client connection pool, which would lock up the Spring Boot app.
+3. **Graceful Degradation**: If Redis goes down, the nodes do not crash; they log warning statements and continue serving local reads from memory (Local hits remain active) while trying to heal.
 
 ## 4. Verified Test Suite (3-Step Validation)
 
